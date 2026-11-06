@@ -1,4 +1,4 @@
-# token-tc — a Claude / PC monitor for the GeekMagic SmallTV-Ultra
+# token-smalltv-ultimate-combo-plus-ultra-admayora — a Claude / PC monitor for the GeekMagic SmallTV-Ultra
 
 Turn a cheap GeekMagic **SmallTV-Ultra** (ESP-12F / ESP8266, 240×240 ST7789 screen) into a desk monitor that shows:
 
@@ -18,7 +18,6 @@ A small Rust daemon on the PC pushes the data to the clock over Wi-Fi; the clock
 | `smalltv-daemon/` | `smalltv-monitord`: pushes data to the clock every second (CPU/RAM/network from `/proc`, disk via `statvfs`, Claude limits from the OAuth API, status from status.claude.com, weather from Open-Meteo) and serves the sprite proxy. | Rust |
 | `smalltv-video/` | `smalltv_video.py`: sends a YouTube URL, GIF, video file or a square of your desktop to the clock. | Python |
 | `themes/` | `.stheme` packages (clock themes), including `pokemon-walk.stheme` and its sources. | JSON / images |
-| `token-tv/` | Clone of [click6067-ship-it/token-tv](https://github.com/click6067-ship-it/token-tv) with two files of ours (`sysmon.py`, `pushmon.py`). Reference only: the original firmware path is no longer used. | Python |
 | `ROADMAP.md`, `handoff.md`, `CLAUDE.md` | Decisions, phases, button circuit notes, working notes (partly in Italian). | |
 
 ## How it works
@@ -132,7 +131,7 @@ Protocol: `POST /api/video {"on":true}`, then TCP port 8888, records `0xA5, y, n
 This project stands on other people's work.
 
 - **[giovi321/smalltv-mod](https://github.com/giovi321/smalltv-mod)** (WTFPL): the firmware we forked. It provides the platform, web portal, settings, theme engine and Claude usage mode. Its own credits include [GeekMagicClock/smalltv-pro](https://github.com/GeekMagicClock/smalltv-pro), [ViToni/esphome-geekmagic-smalltv](https://github.com/ViToni/esphome-geekmagic-smalltv), [MatixYo/ESP32-Plane-Radar](https://github.com/MatixYo/ESP32-Plane-Radar), and [clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter) with mascot frames from [claudepix](https://claudepix.vercel.app).
-- **[click6067-ship-it/token-tv](https://github.com/click6067-ship-it/token-tv)** (MIT): the original idea of Claude limits on a SmallTV, and the base of `token-tv/` (its `NOTICE` covers Anthropic-owned animation data that is outside the MIT grant).
+- **[click6067-ship-it/token-tv](https://github.com/click6067-ship-it/token-tv)** (MIT): the original idea of Claude limits on a SmallTV, and the starting point of this project (we no longer ship its code).
 - **GeekMagic** for the SmallTV-Ultra hardware and stock firmware ([GeekMagicClock/smalltv-ultra](https://github.com/GeekMagicClock/smalltv-ultra)).
 - Libraries and tools: [Arduino_GFX](https://github.com/moononournation/Arduino_GFX), [ArduinoJson](https://arduinojson.org/), [PlatformIO](https://platformio.org/), [Pico CSS](https://picocss.com/) (web page), Rust crates `gif`, `png`, `ureq`, `serde_json`, `time`, `libc`, plus [FFmpeg](https://ffmpeg.org/) and [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 - Data: [Open-Meteo](https://open-meteo.com/) (weather, no key), [status.claude.com](https://status.claude.com) (service status), [PokeAPI](https://pokeapi.co/) (sprites).
@@ -140,4 +139,4 @@ This project stands on other people's work.
 
 ## License
 
-Each bundled project keeps its own license: `smalltv-mod/` is WTFPL (`smalltv-mod/LICENSE`), `token-tv/` is MIT (`token-tv/LICENSE`). The original code of this repository (`smalltv-daemon/`, `smalltv-video/`, `themes/`, firmware additions) has no separate license file yet.
+**Pasta-ware.** See [LICENSE](LICENSE). `smalltv-mod/` keeps its own license (WTFPL, `smalltv-mod/LICENSE`).

@@ -8,8 +8,7 @@ Lingua con l'utente: italiano. Il codice, i nomi e i commenti nel codice restano
 
 | Cartella | Che cos'è | Linguaggio |
 | --- | --- | --- |
-| `token-tv/` | Clone di click6067-ship-it/token-tv. Faceva le immagini per il firmware originale; ora serve soprattutto come riferimento e per `token_tv/sysmon.py` (faccia `monitor`, ormai non più usata sull'orologio) e `token_tv/pushmon.py` (daemon Python di invio, sostituito da quello Rust). | Python |
-| `smalltv-mod/` | Fork locale di giovi321/smalltv-mod (firmware che sostituisce quello GeekMagic). Le modifiche sono tutte in `src/features/usage/` (`UsageData.h`, `UsageClient.cpp`, `UsageMode.h`, `UsageMode.cpp`). Non committate: `git status` le mostra come modificate. | C++ (Arduino, PlatformIO) |
+| `smalltv-mod/` | Fork locale di giovi321/smalltv-mod (firmware che sostituisce quello GeekMagic). Le modifiche sono tutte in `src/features/usage/` (`UsageData.h`, `UsageClient.cpp`, `UsageMode.h`, `UsageMode.cpp`). | C++ (Arduino, PlatformIO) |
 | `smalltv-daemon/` | `smalltv-monitord`: daemon che ogni secondo fa `POST /api/usage` all'orologio. Legge CPU/RAM/rete da `/proc`, il disco con `statvfs`, i limiti Claude dall'API OAuth, lo stato da status.claude.com. | Rust |
 | `smalltv-video/` | `smalltv_video.py`: client Python (test: `cd smalltv-video && python3 -B -m unittest`; serve `ffmpeg`, e `yt-dlp` per YouTube): prende un URL YouTube, una gif o un file video e lo manda in loop all'orologio. | Python |
 | `ROADMAP.md` | Decisioni, fasi e stato. | |
@@ -48,7 +47,6 @@ smalltv-monitord uninstall                                   # spento e rimosso
 journalctl --user -u smalltv-monitord.service -n 20 --no-pager
 ```
 
-Test Python: `cd token-tv && python3 -B -m unittest discover -s tests`.
 
 Configurazione dell'orologio: `GET/POST http://192.168.0.29/api/config`. I campi del fuso stanno annidati: `{"clock":{"tz":"...","tzPosix":"..."}}`; `{"mode":"usage"}` è a livello radice. Stato: `GET /api/status` (`uptime`, `heap`, `maxblk`, `reset`, `synced`).
 
