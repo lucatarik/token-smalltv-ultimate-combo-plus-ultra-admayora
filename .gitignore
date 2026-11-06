@@ -1,0 +1,6 @@
+backup-*.tar.gz
+.pio/
+target/
+__pycache__/
+*.egg-info/
+*.pyc

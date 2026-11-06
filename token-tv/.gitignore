@@ -1,0 +1,7 @@
+/vendor/
+__pycache__/
+*.pyc
+/.runtime/
+/.venv/
+*.egg-info/
+build/

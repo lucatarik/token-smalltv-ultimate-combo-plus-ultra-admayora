@@ -1,0 +1,145 @@
+{
+ "spec": 2,
+ "theme": {
+  "id": "pokemon",
+  "name": "Pokemon",
+  "author": "local",
+  "version": "1.0.0"
+ },
+ "display": {
+  "width": 240,
+  "height": 240,
+  "background": "#d32f2f"
+ },
+ "layers": [
+  {
+   "id": "top",
+   "type": "shape",
+   "shape": "rectangle",
+   "x": 0,
+   "y": 0,
+   "width": 240,
+   "height": 50,
+   "fill": "#b71c1c"
+  },
+  {
+   "id": "lens_ring",
+   "type": "shape",
+   "shape": "circle",
+   "x": 30,
+   "y": 26,
+   "radius": 19,
+   "fill": "#ffffff"
+  },
+  {
+   "id": "lens",
+   "type": "shape",
+   "shape": "circle",
+   "x": 30,
+   "y": 26,
+   "radius": 15,
+   "fill": "#29b6f6"
+  },
+  {
+   "id": "l1",
+   "type": "shape",
+   "shape": "circle",
+   "x": 66,
+   "y": 14,
+   "radius": 5,
+   "fill": "#ef5350",
+   "stroke": "#ffffff",
+   "strokeWidth": 1
+  },
+  {
+   "id": "l2",
+   "type": "shape",
+   "shape": "circle",
+   "x": 84,
+   "y": 14,
+   "radius": 5,
+   "fill": "#fdd835",
+   "stroke": "#ffffff",
+   "strokeWidth": 1
+  },
+  {
+   "id": "l3",
+   "type": "shape",
+   "shape": "circle",
+   "x": 102,
+   "y": 14,
+   "radius": 5,
+   "fill": "#66bb6a",
+   "stroke": "#ffffff",
+   "strokeWidth": 1
+  },
+  {
+   "id": "date",
+   "type": "text",
+   "x": 228,
+   "y": 18,
+   "anchor": "top-right",
+   "value": "{WD} {DD}",
+   "size": 16,
+   "color": "#ffffff"
+  },
+  {
+   "id": "mon",
+   "type": "text",
+   "x": 228,
+   "y": 34,
+   "anchor": "top-right",
+   "value": "{MON}",
+   "size": 8,
+   "color": "#ffcdd2"
+  },
+  {
+   "id": "screen",
+   "type": "shape",
+   "shape": "rectangle",
+   "x": 16,
+   "y": 58,
+   "width": 208,
+   "height": 112,
+   "cornerRadius": 10,
+   "fill": "#e8f5e9",
+   "stroke": "#212121",
+   "strokeWidth": 4
+  },
+  {
+   "id": "sprite",
+   "type": "animation",
+   "x": 72,
+   "y": 66,
+   "width": 96,
+   "height": 96,
+   "source": "animations/mon",
+   "frames": 32,
+   "fps": 1,
+   "loop": true
+  },
+  {
+   "id": "timebox",
+   "type": "shape",
+   "shape": "rectangle",
+   "x": 16,
+   "y": 180,
+   "width": 208,
+   "height": 48,
+   "cornerRadius": 10,
+   "fill": "#212121",
+   "stroke": "#fdd835",
+   "strokeWidth": 2
+  },
+  {
+   "id": "clock",
+   "type": "text",
+   "x": 120,
+   "y": 204,
+   "anchor": "center",
+   "value": "{HH}:{MM}",
+   "size": 40,
+   "color": "#fdd835"
+  }
+ ]
+}

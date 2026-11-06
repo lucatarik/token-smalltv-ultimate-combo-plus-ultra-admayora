@@ -1,0 +1,18 @@
+[package]
+name = "smalltv-monitord"
+version = "0.1.0"
+edition = "2021"
+description = "Pushes Claude limits, Claude status and this computer's load to a SmallTV running smalltv-mod"
+
+[dependencies]
+gif = "0.13"
+libc = "0.2"
+png = "0.17"
+serde_json = "1"
+time = { version = "0.3", features = ["parsing"] }
+ureq = { version = "2", features = ["json"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

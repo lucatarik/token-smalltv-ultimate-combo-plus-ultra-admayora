@@ -1,0 +1,25 @@
+{
+  "name": "token-tv",
+  "version": "0.4.1",
+  "description": "Your Claude, Codex, Grok, Copilot and Antigravity usage limits on a tiny Wi-Fi desk clock (launcher for the Python package)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/click6067-ship-it/token-tv.git"
+  },
+  "bin": {
+    "token-tv": "bin/token-tv.js"
+  },
+  "files": [
+    "bin/",
+    "token_tv/",
+    "!**/__pycache__",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

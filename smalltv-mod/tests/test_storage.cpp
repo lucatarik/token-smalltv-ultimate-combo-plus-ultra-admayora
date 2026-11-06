@@ -1,0 +1,166 @@
+// c++ -std=c++11 -Wall -Wextra -Werror -g -Isrc -I<ArduinoJson include dir>
+// tests/test_storage.cpp -o /tmp/smalltv-storage-tests && /tmp/smalltv-storage-tests
+#include "AtomicJson.h"
+#include "DebouncedSave.h"
+#include "SettingsTransaction.h"
+#include <cassert>
+#include <cstring>
+#include <map>
+#include <memory>
+#include <iostream>
+
+// Minimal in-memory stand-in for LittleFS: enough to exercise a short write
+// (a byte budget that runs out mid-write), a failed rename, and a clean
+// atomic save, without touching a real filesystem.
+struct FakeFS {
+  std::map<std::string, std::string> files;
+  size_t budget = 10000;
+  bool renameFails = false;
+  struct Handle {
+    FakeFS* fs;
+    std::string path;
+    bool failed;
+  };
+  struct File {
+    std::shared_ptr<Handle> h;
+    explicit operator bool() const { return bool(h); }
+    size_t write(const uint8_t* bytes, size_t n) {
+      size_t count = std::min(n, h->fs->budget);
+      h->fs->budget -= count;
+      h->fs->files[h->path].append(reinterpret_cast<const char*>(bytes), count);
+      if (count != n) h->failed = true;
+      return count;
+    }
+    size_t write(uint8_t byte) { return write(&byte, 1); }
+    void flush() {}
+    size_t size() const { return h->fs->files[h->path].size(); }
+    bool getWriteError() const { return h->failed; }
+    void close() {}
+  };
+  File open(const char* path, const char*) {
+    files[path] = "";
+    return File{std::make_shared<Handle>(Handle{this, path, false})};
+  }
+  bool rename(const char* source, const char* target) {
+    if (renameFails) return false;
+    files[target] = files[source];
+    files.erase(source);
+    return true;
+  }
+  bool remove(const char* path) { return files.erase(path); }
+};
+int main() {
+  JsonDocument config;
+  config["wifi"] = "working-network";
+  config["hostname"] = "smalltv-1234";
+  FakeFS fs;
+  fs.files["/config.json"] = "old-settings";
+  // A budget too small to hold the full write: saveJsonAtomically must fail
+  // without ever renaming the short write over the working config.
+  fs.budget = 5;
+  assert(!saveJsonAtomically(fs, config, "/config.json", "/config.json.tmp"));
+  assert(fs.files["/config.json"] == "old-settings");
+  assert(!fs.files.count("/config.json.tmp"));
+  // A complete, correct write whose rename still fails (e.g. no space for
+  // the directory entry): the old config must survive untouched here too.
+  fs.budget = 10000;
+  fs.renameFails = true;
+  assert(!saveJsonAtomically(fs, config, "/config.json", "/config.json.tmp"));
+  assert(fs.files["/config.json"] == "old-settings");
+  fs.renameFails = false;
+  // The success path: the temporary becomes the target and is not left behind.
+  assert(saveJsonAtomically(fs, config, "/config.json", "/config.json.tmp"));
+  JsonDocument saved;
+  assert(!deserializeJson(saved, fs.files["/config.json"]));
+  assert(saved["hostname"] == "smalltv-1234");
+  assert(!fs.files.count("/config.json.tmp"));
+
+  // A document that ran out of memory while it was built: ArduinoJson leaves
+  // out what did not fit, so it is complete JSON of only part of the settings.
+  // Saving it would replace the working config with a partial one, and the
+  // next boot would fall back to defaults for the rest (WiFi included).
+  struct LimitedAllocator : ArduinoJson::Allocator {
+    size_t left;
+    explicit LimitedAllocator(size_t bytes) : left(bytes) {}
+    void* allocate(size_t n) override {
+      if (n > left) return nullptr;
+      left -= n;
+      return malloc(n);
+    }
+    void deallocate(void* p) override { free(p); }
+    void* reallocate(void* p, size_t n) override {
+      if (n > left) return nullptr;
+      left -= n;
+      return realloc(p, n);
+    }
+  } small(1200);
+  JsonDocument partial(&small);
+  for (int i = 0; i < 200 && !partial.overflowed(); ++i) partial[std::string("key") + std::to_string(i)] = "a value long enough to need its own copy";
+  assert(partial.overflowed());
+  fs.files["/config.json"] = "old-settings";
+  assert(!saveJsonAtomically(fs, partial, "/config.json", "/config.json.tmp"));
+  assert(fs.files["/config.json"] == "old-settings");
+  assert(!fs.files.count("/config.json.tmp"));
+
+  struct State {
+    int value;
+  } state{1};
+  bool savedState = false;
+  // A failed save must roll the in-memory mutation back to its prior value.
+  assert(!applyAndSaveSettings(state, [](State& s) { s.value = 2; }, [&](const State&) { return savedState; }));
+  assert(state.value == 1);
+  savedState = true;
+  // A successful save keeps the mutation applied.
+  assert(applyAndSaveSettings(state, [](State& s) { s.value = 3; }, [&](const State& s) { return savedState && s.value == 3; }));
+  assert(state.value == 3);
+
+  // The HA brightness write (MqttClient): it waits for 5 s of quiet, and a
+  // write that fails (out of memory next to a running theme) stays pending and
+  // is tried again 30 s later, instead of being dropped.
+  int calls = 0;
+  bool saveOk = true;
+  auto save = [&] { ++calls; return saveOk; };
+  DebouncedSave brightness(5000, 30000);
+  brightness.service(100000, save);
+  assert(calls == 0);  // nothing requested
+  brightness.request(1000);
+  brightness.service(5999, save);
+  assert(calls == 0 && brightness.pending());
+  brightness.request(3000);  // another command restarts the wait
+  brightness.service(6000, save);
+  assert(calls == 0);
+  brightness.service(8000, save);
+  assert(calls == 1 && !brightness.pending());
+  brightness.service(50000, save);
+  assert(calls == 1);  // written once
+  // A failed write is kept and retried after 30 s, not sooner.
+  saveOk = false;
+  brightness.request(100000);
+  brightness.service(105000, save);
+  assert(calls == 2 && brightness.pending());
+  brightness.service(134999, save);
+  assert(calls == 2);
+  saveOk = true;
+  brightness.service(135000, save);
+  assert(calls == 3 && !brightness.pending());
+  // A new command while a retry waits: written 5 s after that command.
+  saveOk = false;
+  brightness.request(200000);
+  brightness.service(205000, save);
+  assert(calls == 4 && brightness.pending());
+  saveOk = true;
+  brightness.request(206000);
+  brightness.service(210999, save);
+  assert(calls == 4);
+  brightness.service(211000, save);
+  assert(calls == 5 && !brightness.pending());
+  // millis() wraps after 49 days: the deadline wraps before the clock does.
+  brightness.request(0xFFFFF000u);
+  brightness.service(0xFFFFF000u + 100, save);
+  assert(calls == 5);
+  brightness.service(0xFFFFF000u + 4999, save);
+  assert(calls == 5);
+  brightness.service(0xFFFFF000u + 5000, save);
+  assert(calls == 6 && !brightness.pending());
+  std::cout << "atomic settings storage tests passed\n";
+}

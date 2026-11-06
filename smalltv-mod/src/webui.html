@@ -1,0 +1,67 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>SmallTV</title>
+<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/@picocss/pico@2.0.6/css/pico.classless.min.css">
+<style>main{max-width:34rem}small{opacity:.6}li{display:flex;gap:.5rem;align-items:center}li span{flex:1}li button{margin:0;padding:.2rem .6rem;width:auto}</style>
+<main>
+<h4>SmallTV <small id=st></small></h4>
+<form id=f>
+<label>Mode<select name=mode><option>carousel<option>usage<option>theme</select></label>
+<fieldset><legend>Screens</legend>
+<label><input type=checkbox name=autoRotate>Rotate automatically</label>
+<label>Seconds per screen<input type=number name=carouselSec min=5 max=3600></label>
+<div id=ns></div>
+<label><input type=checkbox name=snakeAuto>Snake plays itself if OK is not pressed in 3 s</label>
+<div id=sc></div></fieldset>
+<label>Brightness<input type=range name=brightness min=0 max=100></label>
+<label>Rotation<select name=rotation><option value=0>0<option value=1>90<option value=2>180<option value=3>270</select></label>
+<label>Time zone<input name=clock.tz></label>
+<label>POSIX rule<input name=clock.tzPosix></label>
+<label>Weather place<input name=wxPlace></label>
+<label>Latitude<input name=wxLat type=number step=any></label>
+<label>Longitude<input name=wxLon type=number step=any></label>
+<label>Wi-Fi<input name=staSsid></label>
+<label>Password<input name=staPass type=password placeholder=unchanged></label>
+<button>Save</button> <small id=m></small>
+</form>
+<h5>Buttons <small id=adc></small></h5>
+<div role=group id=b><button data-b=left>&lt;</button><button data-b=ok>OK</button><button data-b=back>Back</button><button data-b=right>&gt;</button></div>
+<h5>Themes <small id=tm></small></h5>
+<ul id=th></ul>
+<input type=file id=up accept=.stheme>
+</main>
+<script>
+const $=s=>document.querySelector(s),J=(u,b)=>fetch(u,b&&{method:'POST',body:JSON.stringify(b)}).then(r=>r.json().catch(()=>({})));
+const NS={0:'Out (>)',1:'In (<)',2:'UDP (u)',3:'Web (w, dimmed)'},SC={1:'Monitor',7:'CPU / RAM',8:'Network',9:'Weather',6:'Clock (theme)',10:'Snake'};let L={},M=65535,N=7;const get=(o,k)=>k.split('.').reduce((a,p)=>a&&a[p],o);
+async function load(){
+ const c=await J('/api/config');
+ L={};M=c.screenMask;N=c.netShow;
+ $('#ns').innerHTML='<small>Network screen lists</small>'+Object.entries(NS).map(([b,n])=>`<label><input type=checkbox class=sc data-n=${b}${N>>b&1?' checked':''}>${n}</label>`).join('');
+ $('#sc').innerHTML=Object.entries(SC).map(([b,n])=>`<label><input type=checkbox class=sc data-b=${b}${M>>b&1?' checked':''}>${n}</label>`).join('');
+ for(const e of $('#f').elements)if(e.name&&e.name!='staPass'&&!e.classList.contains('sc'))
+  e.type=='checkbox'?e.checked=L[e.name]=!!c[e.name]:e.value=L[e.name]=get(c,e.name)??'';
+ const s=await J('/api/status');$('#st').textContent=`${s.ip} · ${s.heap} B free`;
+ const t=await J('/api/themes');
+ $('#th').innerHTML=(t.themes||[]).map(x=>`<li><span>${x.name||x.id} <small>${x.bytes} B${x.valid?'':' · invalid'}</small></span>`+
+  `<button data-s="${x.id}"${x.id==t.selected?' disabled':''}>Use</button><button data-d="${x.id}">×</button></li>`).join('')+
+  `<small>${t.freeBytes} B free</small>`;
+}
+$('#f').onsubmit=async e=>{
+ e.preventDefault();const o={clock:{}};
+ for(const x of e.target.elements){if(!x.name||x.classList.contains('sc')||(x.name=='staPass'?!x.value:(x.type=='checkbox'?x.checked:x.value)==L[x.name]))continue;
+  const v=x.type=='checkbox'?x.checked:['range','number'].includes(x.type)||x.name=='rotation'?+x.value:x.value,k=x.name.split('.');k[1]?o[k[0]][k[1]]=v:o[k[0]]=v}
+ let m=0;let n=0;document.querySelectorAll('.sc').forEach(x=>{if(x.dataset.b)m|=x.checked<<x.dataset.b;else n|=x.checked<<x.dataset.n});if(m!=M)o.screenMask=m;if(n!=N)o.netShow=n;
+ await J('/api/config',o);$('#m').textContent='saved';setTimeout(load,800)};
+$('#b').onclick=e=>e.target.dataset.b&&J('/api/button',{b:e.target.dataset.b});
+let busy=0;
+const T=async(u,b)=>{$('#tm').textContent='working...';busy=1;
+ try{const r=await fetch(u,{method:'POST',body:b});const t=await r.text();let m=t;try{const j=JSON.parse(t);m=j.error||j.id||t}catch(_){}
+  $('#tm').textContent=r.ok?'ok: '+m:'error '+r.status+': '+m;return r.ok}
+ catch(x){$('#tm').textContent='error: '+x.message;return 0}finally{busy=0;load()}};
+$('#th').onclick=async e=>{const d=e.target.dataset;
+ if(d.s&&await T('/api/themes/select',JSON.stringify({id:d.s})))await J('/api/config',{mode:'carousel'});
+ if(d.d&&confirm('Delete '+d.d+'?'))await T('/api/themes/delete',JSON.stringify({id:d.d}))};
+$('#up').onchange=async e=>{const x=e.target.files[0];if(!x)return;const f=new FormData();f.append('theme',x,x.name);
+ await T('/api/themes/install',f);e.target.value=''};
+setInterval(()=>busy||J('/api/button').then(a=>$('#adc').textContent='adc '+a.adc),1500);
+load();
+</script>

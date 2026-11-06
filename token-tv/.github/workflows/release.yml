@@ -1,0 +1,35 @@
+name: Release
+
+# Publishing a GitHub release uploads that tag to PyPI through Trusted Publishing (no stored token).
+# PyPI side: project token-tv, owner click6067-ship-it, repository token-tv, workflow release.yml,
+# environment pypi.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    name: Test, build and publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get install -y -q fonts-dejavu-core
+      - run: python -m pip install -q build Pillow
+      - run: python -B -m unittest discover -s tests
+      - run: python -m build
+      - name: Install the wheel in a clean venv and render the demo faces
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install -q dist/*.whl
+          cd /tmp && /tmp/smoke/bin/token-tv demo
+      - uses: pypa/gh-action-pypi-publish@release/v1

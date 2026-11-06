@@ -1,0 +1,242 @@
+#include "ThemeMode.h"
+#if WITH_THEME
+#include "Clock.h"
+#include "Gfx.h"
+#include "Platform.h"
+#include "ThemeDataClient.h"
+#include <Arduino_GFX_Library.h>
+#include <font/glcdfont.h>
+#include <algorithm>
+
+ThemeMode g_themeMode;
+static uint32_t g_frames, g_renderMs, g_pumpMs, g_dirtyPx;
+uint32_t themeFrames() { return g_frames; }
+uint32_t themeRenderMs() { return g_renderMs; }
+uint32_t themePumpMs() { return g_pumpMs; }
+uint32_t themeDirtyPx() { return g_dirtyPx; }
+namespace {
+// Adapts the portable engine's Display interface to this device's actual
+// panel: glyphColumn() reads the built-in font from flash (PROGMEM), and
+// row() applies the usual panel color tint before handing the row to the
+// GFX driver. yield() every 16 rows keeps a large dirty region from starving
+// WiFi/other tasks during a long render.
+class Panel : public smalltv::Display {
+ public:
+  uint8_t glyphColumn(uint8_t c, uint8_t col) const override {
+    return pgm_read_byte(font + unsigned(c) * 5 + col);
+  }
+  void row(int x, int y, const uint16_t* pixels, int count) override {
+    uint16_t tinted[240];
+    for (int i = 0; i < count; ++i) tinted[i] = gfxTint(pixels[i]);
+    gfxDev()->draw16bitRGBBitmap(x, y, tinted, count, 1);
+    if ((y & 15) == 15) yield();
+  }
+};
+// What a load needs before it starts: a package parse (ThemeMode.h). A failed
+// allocation mid-load restarts the ESP8266, so a load that would not fit
+// waits instead.
+constexpr uint32_t LoadFreeHeap = ThemeMode::ParseFreeHeap;
+constexpr uint32_t LoadLargestBlock = ThemeMode::ParseLargestBlock;
+const char* const WaitingForMemory = "Waiting for free memory";
+}
+void ThemeMode::begin(const Settings&) {
+  LittleFS.mkdir("/themes");
+  // An interrupted install leaves its staging file behind; boot is the one
+  // point it is safe to remove without racing a request in progress.
+  LittleFS.remove("/themes/.upload");
+}
+// Drops every bit of state for the currently loaded theme -- the open
+// package/file, any in-flight or fetched data, and the engine itself -- so
+// the next service() call starts a clean load from scratch.
+void ThemeMode::unload() {
+  dataRequests_.cancel();
+  dataRequests_.take();
+  package_.reset();
+  remote_.reset();
+  file_.reset();
+  dataNextMs_.clear();
+  dataScheduled_.clear();
+  dataValues_.clear();
+  dataCursor_ = 0;
+  engine_.setValues({});
+  engine_.setTheme(smalltv::Theme{}, millis());
+  loadedId_ = "";
+  attempted_ = messageDrawn_ = keepData_ = false;
+  error_ = "";
+}
+void ThemeMode::release(uint32_t needFree, uint32_t needLargestBlock) {
+  if (!package_ || (ESP.getFreeHeap() >= needFree && platformMaxFreeBlock() >= needLargestBlock)) return;
+  // A fetch in flight is dropped; its source is still due, so the reload
+  // fetches it again.
+  dataRequests_.cancel();
+  dataRequests_.take();
+  remote_.reset();
+  package_.reset();
+  file_.reset();
+  engine_.setValues({});
+  engine_.setTheme(smalltv::Theme{}, millis());
+  attempted_ = messageDrawn_ = false;
+  keepData_ = true;
+}
+// Collects a finished fetch (if any) and, with at most one request in flight
+// at a time, starts the next source whose interval has elapsed, round-robin
+// over sources so no single slow/failing one starves the others.
+void ThemeMode::refreshData() {
+  const auto& sources = engine_.theme().data;
+  if (auto result = dataRequests_.take()) {
+    if (result->success) {
+      // Merge into the running set by key rather than replace it wholesale:
+      // a source's fields persist across refreshes of the *other* sources, so
+      // a slow source does not blank fields a fast one already delivered.
+      for (auto& value : result->values) {
+        auto existing = std::find_if(dataValues_.begin(), dataValues_.end(), [&](const smalltv::ThemeValue& old) { return old.key == value.key; });
+        if (existing == dataValues_.end()) dataValues_.push_back(std::move(value));
+        else existing->value = std::move(value.value);
+      }
+      engine_.setValues(dataValues_);
+    }
+    // Schedule from completion, preserving the interval even for slow sources.
+    dataNextMs_[result->index] = millis() + sources[result->index].interval * 1000UL;
+  }
+  if (sources.empty() || dataRequests_.busy() || WiFi.status() != WL_CONNECTED) return;
+  // Scan forward from `dataCursor_` for the first source that is due (an
+  // unscheduled one always is), start it, and advance the cursor past it --
+  // so a source that just fired goes to the back of the round-robin queue.
+  for (size_t offset = 0; offset < sources.size(); ++offset) {
+    size_t i = (dataCursor_ + offset) % sources.size();
+    if (dataScheduled_[i] && static_cast<int32_t>(millis() - dataNextMs_[i]) < 0) continue;
+    auto request = dataRequests_.start(sources[i], i);
+    if (!startThemeDataFetch(request)) request->finish(false);
+    dataScheduled_[i] = true;
+    dataCursor_ = (i + 1) % sources.size();
+    break;
+  }
+}
+// Called when the theme should be redrawn from scratch, e.g. when a
+// notification overlay just finished. Switches to a different theme by
+// unloading first; otherwise leaves the loaded package alone and only marks
+// the engine's next update() as a full repaint.
+void ThemeMode::invalidate(const Settings& s) {
+  const bool onScreen = s.mode == MODE_THEME || (s.mode == MODE_CAROUSEL && s.carouselTheme);
+  if (loadedId_ != s.themeId || !onScreen) unload();
+  // A failed load may be retried after installation or settings changes.
+  if (!package_) attempted_ = false;
+  engine_.invalidate();
+  messageDrawn_ = false;
+}
+// Per-frame entry point: loads the selected theme at most once per selection
+// (via `attempted_`, so a failed load is not retried every call -- only on
+// the next invalidate()/selection change), then renders it. `attempted_` and
+// `loadedId_` together are the load state machine; everything past the load
+// block runs every call once a package is open.
+void ThemeMode::service(const Settings& s) {
+  if (loadedId_ != s.themeId) {
+    unload();
+    loadedId_ = s.themeId;
+  }
+  // A web request, or the buffers of its reply, can briefly hold the heap a
+  // load needs; the load then waits, checked again every frame.
+  const bool loadFits = ESP.getFreeHeap() >= LoadFreeHeap && platformMaxFreeBlock() >= LoadLargestBlock;
+  if (!attempted_ && !loadFits && error_ != WaitingForMemory) {
+    error_ = WaitingForMemory;
+    messageDrawn_ = false;
+  }
+  if (!attempted_ && loadFits) {
+    attempted_ = true;
+    std::string error;
+    smalltv::Theme theme;
+    if (!smalltv::validId(s.themeId.c_str())) error = "Select an installed theme";
+    else {
+      file_.reset(new ThemeFile);
+      if (!file_->open("/themes/" + s.themeId + ".stheme")) error = "Theme file not found";
+      else {
+        package_.reset(new smalltv::Package(*file_));
+        if (!package_->load(theme, error)) package_.reset();
+        else if (theme.id != s.themeId.c_str()) {
+          error = "Theme ID mismatch";
+          package_.reset();
+        }
+      }
+    }
+    if (!error.empty()) {
+      error_ = error.c_str();
+      package_.reset();
+      file_.reset();
+    } else {
+      // After a release the same package loads again, so its sources match.
+      if (!keepData_ || dataNextMs_.size() != theme.data.size()) {
+        dataNextMs_.assign(theme.data.size(), 0);
+        dataScheduled_.assign(theme.data.size(), false);
+        dataValues_.clear();
+        dataCursor_ = 0;
+      }
+      if (!theme.walks.empty()) remote_.reset(new RemoteAssets(*package_));
+      engine_.setTheme(std::move(theme), millis());
+      engine_.setValues(dataValues_);
+      error_ = "";
+    }
+  }
+  if (!package_) {
+    if (!messageDrawn_) {
+      gfxMessage("THEMES", error_.c_str(), C_WHITE);
+      messageDrawn_ = true;
+    }
+    return;
+  }
+  // Walkers move every frame; 25 frames a second is smooth and leaves the web server its turn.
+  if (remote_ && millis() - lastFrameMs_ < 40) return;
+  lastFrameMs_ = millis();
+  refreshData();
+  tm t{};
+  bool valid = clockNow(t);
+  Panel panel;
+  engine_.setLanguage(smalltv::languageFromCode(s.clock.lang.c_str()));
+  auto dirty = engine_.update(millis(), valid ? &t : nullptr);
+  g_frames++;
+  // A render failure (a corrupt or truncated asset read mid-frame) is treated
+  // like a load failure: drop the package and show an error rather than
+  // risk repeatedly failing on every subsequent frame.
+  smalltv::Assets& assets = remote_ ? static_cast<smalltv::Assets&>(*remote_) : *package_;
+  const uint32_t renderStart = millis();
+  for (const auto& r : dirty) g_dirtyPx += uint32_t(r.w) * r.h;
+  const bool rendered = smalltv::render(engine_, dirty, assets, panel);
+  g_renderMs += millis() - renderStart;
+  if (!rendered) {
+    dataRequests_.cancel();
+    dataRequests_.take();
+    error_ = "Could not read theme asset";
+    remote_.reset();
+    package_.reset();
+    file_.reset();
+    messageDrawn_ = false;
+  } else if (remote_) {
+    prefetchWalkers();
+    const uint32_t pumpStart = millis();
+    const uint32_t arrived = remote_->pump();
+    g_pumpMs += millis() - pumpStart;
+    if (arrived) refreshWalkers(arrived);   // a sprite arrived: draw the walkers that wait for it
+  }
+}
+// Draws again the walkers whose sprite is the one that has just arrived (not the whole screen).
+void ThemeMode::refreshWalkers(uint32_t arrived) {
+  const smalltv::Theme& theme = engine_.theme();
+  for (size_t i = 0; i < theme.layers.size(); ++i) {
+    const smalltv::Layer& l = theme.layers[i];
+    if (l.type == smalltv::LayerType::Walker &&
+        RemoteAssets::hashOf(smalltv::walkerPath(l, theme.walks[l.spec], engine_.walk(l.walk), 0)) == arrived)
+      engine_.refresh(i);
+  }
+}
+// Asks for the sprite of every walker that has just set off, while it is still outside the screen.
+void ThemeMode::prefetchWalkers() {
+  const smalltv::Theme& theme = engine_.theme();
+  for (size_t i = 0; i < theme.layers.size(); ++i) {
+    const smalltv::Layer& l = theme.layers[i];
+    if (l.type != smalltv::LayerType::Walker) continue;
+    const smalltv::WalkState& w = engine_.walk(l.walk);
+    if (w.ms <= 1 || w.start == seenWalk_[l.walk]) continue;
+    seenWalk_[l.walk] = w.start;
+    remote_->want(smalltv::walkerPath(l, theme.walks[l.spec], w, 0));
+  }
+}
+#endif
